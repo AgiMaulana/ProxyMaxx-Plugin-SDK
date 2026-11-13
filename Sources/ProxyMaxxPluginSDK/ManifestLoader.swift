@@ -24,8 +24,8 @@ public struct ManifestLoader: Sendable {
     )
 
     /// Loads and validates the manifest. Throws `PermissionError.invalidManifest`
-    /// when the directory, file, or contents are unusable, or when declared
-    /// permission identifiers are blank or duplicated.
+    /// when the directory, file, or contents are unusable, or when the plugin id
+    /// or declared permission identifiers are blank, malformed, or duplicated.
     public func load() throws -> PluginManifest {
         guard let directory = environment("PROXYMAXX_PLUGIN_DIR"), !directory.isEmpty else {
             throw PermissionError.invalidManifest("PROXYMAXX_PLUGIN_DIR is not set.")
@@ -47,19 +47,7 @@ public struct ManifestLoader: Sendable {
             throw PermissionError.invalidManifest("Cannot decode manifest.json: \(error.localizedDescription)")
         }
 
-        try validate(manifest)
+        try ManifestValidation.validate(manifest)
         return manifest
-    }
-
-    private func validate(_ manifest: PluginManifest) throws {
-        var seen = Set<String>()
-        for permission in manifest.permissions {
-            guard !permission.id.isEmpty, !permission.id.contains(where: { $0.isWhitespace }) else {
-                throw PermissionError.invalidManifest("Blank permission identifier.")
-            }
-            guard seen.insert(permission.id).inserted else {
-                throw PermissionError.invalidManifest("Duplicate permission identifier '\(permission.id)'.")
-            }
-        }
     }
 }

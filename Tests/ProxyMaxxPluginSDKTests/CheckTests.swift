@@ -5,7 +5,7 @@ final class CheckTests: XCTestCase {
     func testCheckMapsEveryStatusWithoutConsent() async throws {
         // Spec §5.3: check never displays consent UI; NOT_REQUESTED is valid here.
         let bridge = SpyBridge()
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         for expected in [PermissionStatus.granted, .denied, .notRequested, .unavailable] {
             bridge.checkHandler = { _ in expected }
@@ -17,7 +17,7 @@ final class CheckTests: XCTestCase {
 
     func testCheckUndeclaredPermissionThrowsNotDeclaredWithoutHostContact() async throws {
         let bridge = SpyBridge()
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.check("filesystem.read")
@@ -31,7 +31,7 @@ final class CheckTests: XCTestCase {
     func testCheckHostFailurePropagates() async throws {
         let bridge = SpyBridge()
         bridge.checkHandler = { _ in throw PermissionError.hostUnavailable }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.check("local-map.read")
@@ -50,7 +50,7 @@ final class CheckTests: XCTestCase {
                 ids[2]: .unavailable,
             ]
         }
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create", "local-map.delete"])
         )
@@ -68,7 +68,7 @@ final class CheckTests: XCTestCase {
     func testCheckAllWithEmptyManifestReturnsEmptyMapWithoutHostContact() async throws {
         // Spec §5.4: no permissions declared → empty map, no host call.
         let bridge = SpyBridge()
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: []))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: []))
 
         let statuses = try await manager.checkAll()
 
@@ -79,7 +79,7 @@ final class CheckTests: XCTestCase {
     func testCheckAllReplyMissingAnIdFailsClosed() async throws {
         let bridge = SpyBridge()
         bridge.checkAllHandler = { ids in [ids[0]: .granted] }
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create"])
         )

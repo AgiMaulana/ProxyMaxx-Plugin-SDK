@@ -16,6 +16,11 @@ let package = Package(
         .target(
             name: "ProxyMaxxPluginSDK"
         ),
+        .executableTarget(
+            name: "TimeLoggerExample",
+            dependencies: ["ProxyMaxxPluginSDK"],
+            path: "Examples/TimeLogger"
+        ),
         .testTarget(
             name: "ProxyMaxxPluginSDKTests",
             dependencies: ["ProxyMaxxPluginSDK"]

@@ -19,14 +19,20 @@ Sources/ProxyMaxxPluginSDK/
   PermissionStatus.swift           GRANTED/DENIED/NOT_REQUESTED/UNAVAILABLE (uppercase wire strings)
   PermissionError.swift            typed errors; fail closed on every unverifiable situation
   PluginManifest.swift             minimal manifest.json decode (id, name, version, sdkVersion, permissions)
+  ManifestValidation.swift         shared validation for every init path (SDK-01)
   ManifestLoader.swift             loads manifest from PROXYMAXX_PLUGIN_DIR; env/file access injected
   PermissionManager.swift          public actor: request/requestAll/check/checkAll + local validation
   PermissionHostBridge.swift       transport protocol (tests/embedders may substitute)
   JSONLinesBridge.swift            protocol v1 implementation over stdin/stdout
-  JSONLines.swift                  codec + FileHandle line source/sink
-  PendingRequestTable.swift        requestId → continuation correlation; cancellation-safe
-Docs/PROTOCOL.md                   wire contract v1 (message table, host/SDK obligations)
-Tests/ProxyMaxxPluginSDKTests/     XCTest; manager-level (SpyBridge) + wire-level (ScriptedLineSource)
+  JSONLines.swift                  codec + Framer (per-line framing) + FileHandle line source/sink
+  PendingRequestTable.swift        requestId → continuation correlation; bounded, race-safe lifecycle
+Docs/
+  PROTOCOL.md                      wire contract v1 (message table, host/SDK obligations, host status)
+  QUICKSTART.md                    dependency → manifest → package → install
+  API.md                           public API reference + error-handling patterns
+  COMPATIBILITY.md                 semver policy, host compatibility matrix
+Examples/TimeLogger/               minimal example plugin (TimeLoggerExample target)
+Tests/ProxyMaxxPluginSDKTests/     XCTest; manager-level (SpyBridge) + wire-level (ScriptedLineSource, Framer)
 ```
 
 ## Commands
@@ -46,16 +52,21 @@ change first:
 
 - **Local validation before host contact.** Undeclared permission ids throw
   `notDeclared` without a round-trip; invalid batch input (empty, duplicates,
-  any undeclared) throws before any partial request is initiated.
+  any undeclared) throws before any partial request is initiated. Every
+  initialization path applies the same `ManifestValidation` rules.
 - **Fail closed.** Unknown status strings, batch replies missing requested ids,
-  malformed lines, closed channel, `NOT_REQUESTED` surfacing from a completed
-  request → all fail with `hostUnavailable`. Never guess at an unverifiable
-  reply.
+  malformed lines, invalid UTF-8, oversized lines, EOF with a partial line,
+  closed channel, `NOT_REQUESTED` surfacing from a completed request → all
+  fail with `hostUnavailable`. Never guess at an unverifiable reply.
+- **Framing is per line.** The 1 MiB limit applies to each line, not each read
+  chunk; a chunk with multiple valid lines whose combined size exceeds the
+  limit is fine. Outgoing messages respect the same bound.
 - **No state.** Statuses are never cached; every call resolves current host
   state (revocation must be observable immediately).
 - **Cancellation is cancellation.** Task cancellation sends `permission.cancel`
   and throws `CancellationError`; host `permission.cancelled` throws
-  `CancellationError`. Never convert cancellation to a status.
+  `CancellationError`. Never convert cancellation to a status. Late
+  cancellation after resolution creates no bookkeeping.
 - **A completed `request`/`requestAll` never returns `notRequested`.**
 
 ## Transport rules
@@ -78,7 +89,10 @@ change first:
   `PluginManifest*`, `PermissionHostBridge`). Transport internals stay
   `internal`.
 - Tests: XCTest, `@testable import`. Manager-level tests use `SpyBridge`;
-  wire-level tests use `ScriptedLineSource` + `CapturingLineSink`. No process
-  environment access in tests (inject everything).
+  wire-level tests use `ScriptedLineSource` + `CapturingLineSink`; framing
+  tests use `Framer` directly and real `Pipe` pairs. No process environment
+  access in tests (inject everything).
+- Versioning per `Docs/COMPATIBILITY.md`: semver, release tags, protocol
+  versioned independently of the package version.
 - Changing `PermissionStatus.wireString` values or message `kind` strings is a
   protocol break — both sides (SDK + host PluginRunner) must move together.

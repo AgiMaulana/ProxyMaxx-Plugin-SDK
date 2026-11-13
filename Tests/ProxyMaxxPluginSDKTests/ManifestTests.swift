@@ -104,3 +104,81 @@ final class ManifestTests: XCTestCase {
         }
     }
 }
+
+extension ManifestTests {
+    func testManagerInitRejectsDuplicatePermissionIdsWithoutHostContact() async throws {
+        let bridge = SpyBridge()
+        do {
+            _ = try PermissionManager(
+                bridge: bridge,
+                manifest: makeManifest(ids: ["local-map.read", "local-map.read"])
+            )
+            XCTFail("Expected invalidManifest")
+        } catch let error as PermissionError {
+            guard case .invalidManifest = error else {
+                return XCTFail("Expected invalidManifest, got \(error)")
+            }
+        }
+        XCTAssertEqual(bridge.recordedOperations, [])
+    }
+
+    func testManagerInitRejectsPermissionIdWithWhitespace() async throws {
+        let bridge = SpyBridge()
+        do {
+            _ = try PermissionManager(
+                bridge: bridge,
+                manifest: makeManifest(permissions: [makePermission(id: "local map.read")])
+            )
+            XCTFail("Expected invalidManifest")
+        } catch let error as PermissionError {
+            guard case .invalidManifest = error else {
+                return XCTFail("Expected invalidManifest, got \(error)")
+            }
+        }
+        XCTAssertEqual(bridge.recordedOperations, [])
+    }
+
+    func testManagerInitRejectsEmptyPluginId() async throws {
+        let bridge = SpyBridge()
+        do {
+            _ = try PermissionManager(
+                bridge: bridge,
+                manifest: PluginManifest(
+                    id: "",
+                    name: "x",
+                    version: "1.0.0",
+                    sdkVersion: "^1.0.0",
+                    permissions: [makePermission(id: "local-map.read")]
+                )
+            )
+            XCTFail("Expected invalidManifest")
+        } catch let error as PermissionError {
+            guard case .invalidManifest = error else {
+                return XCTFail("Expected invalidManifest, got \(error)")
+            }
+        }
+        XCTAssertEqual(bridge.recordedOperations, [])
+    }
+
+    func testValidManifestBehavesIdenticallyOnBothInitializationPaths() async throws {
+        // Injected path.
+        let injectedBridge = SpyBridge()
+        let injected = try PermissionManager(
+            bridge: injectedBridge,
+            manifest: makeManifest(ids: ["local-map.read"])
+        )
+        _ = try await injected.check("local-map.read")
+
+        // Loader path: identical declared set via injected environment.
+        let loader = ManifestLoader(
+            environment: { _ in "/tmp/plugins/example" },
+            fileReader: { _ in Data(manifestJSONString(ids: ["local-map.read"]).utf8) }
+        )
+        let loadedManifest = try loader.load()
+        let loaderBridge = SpyBridge()
+        let loaded = try PermissionManager(bridge: loaderBridge, manifest: loadedManifest)
+        _ = try await loaded.check("local-map.read")
+
+        XCTAssertEqual(injectedBridge.recordedOperations, loaderBridge.recordedOperations)
+    }
+}

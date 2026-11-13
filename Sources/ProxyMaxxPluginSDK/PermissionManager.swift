@@ -15,8 +15,11 @@ public actor PermissionManager {
     private let manifestOrderIds: [String]
 
     /// Manager over an explicit bridge and manifest. Used by tests and
-    /// embedders.
-    public init(bridge: any PermissionHostBridge, manifest: PluginManifest) {
+    /// embedders. The manifest is validated with the same rules as
+    /// `ManifestLoader` (spec SDK-01): invalid manifests are rejected before
+    /// any host communication can occur.
+    public init(bridge: any PermissionHostBridge, manifest: PluginManifest) throws {
+        try ManifestValidation.validate(manifest)
         self.bridge = bridge
         self.declaredIds = Set(manifest.permissionIds)
         self.manifestOrderIds = manifest.permissionIds
@@ -26,7 +29,7 @@ public actor PermissionManager {
     /// `PROXYMAXX_PLUGIN_DIR` and uses the JSON-lines stdin/stdout bridge.
     public init() throws {
         let manifest = try ManifestLoader.standard.load()
-        self.init(bridge: JSONLinesBridge(), manifest: manifest)
+        try self.init(bridge: JSONLinesBridge(), manifest: manifest)
     }
 
     /// Requests authorization for one declared permission (spec §5.1).

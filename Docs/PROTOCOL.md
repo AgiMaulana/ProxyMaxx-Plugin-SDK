@@ -90,3 +90,28 @@ host → plugin: {"kind":"permission.cancelled","requestId":"A2"}     // user di
 plugin → host: {"kind":"permission.requestAll","requestId":"A3","permissionIds":["local-map.read","local-map.create"]}
 host → plugin: {"kind":"permission.statuses","requestId":"A3","statuses":{"local-map.read":"GRANTED","local-map.create":"DENIED"}}
 ```
+
+## Host implementation status (ProxyMaxx PR #49)
+
+Protocol v1 is the single wire contract. The current host implementation
+(`Sources/PluginKit/PluginRunner.swift` in ProxyMaxx PR #49) predates it and
+must be updated before SDK plugins run correctly. The SDK does **not**
+downgrade its contract or provide a compatibility adapter.
+
+Deltas the host must adopt:
+
+| Gap in PR #49 | Required behavior (Protocol v1) |
+|---|---|
+| No `requestId` on request or response messages | Every request carries a UUID `requestId`; every reply correlates with it |
+| Only `permission.request` accepted | Also accept `permission.requestAll`, `permission.check`, `permission.checkAll`, `permission.cancel` |
+| Only `permission.status` sent | Also send `permission.statuses` (one entry per requested id) for batches, `permission.cancelled` for dismissal, `permission.error` for unrecoverable failures |
+| Unknown kind terminates the plugin | Unknown message kinds are ignored for forward compatibility (host→plugin side); the host must tolerate unknown request kinds too |
+| Consent dismissal recorded and returned as `DENIED` | Dismissal is cancellation, not denial: reply `permission.cancelled`, persist no decision |
+| No-presenter consent returns `NOT_REQUESTED` to the plugin | A completed request must never surface `NOT_REQUESTED`; resolve to a decision or signal cancellation |
+| One consent experience per singular request | Batch requests may group consent but must preserve independent per-permission decisions |
+
+The host also enforces a 1 MiB line limit, UTF-8 validation, and
+malformed-line termination, which matches the SDK's framing rules.
+
+Follow-up (host-side): a host/SDK integration test covering concurrent
+requests, batch requests, checks, and cancellation.

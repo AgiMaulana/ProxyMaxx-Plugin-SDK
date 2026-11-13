@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "id": "com.example.timelogger",
+  "name": "Time Logger",
+  "version": "1.0.0",
+  "description": "Example plugin that logs when it reads Local Override rules.",
+  "author": "ProxyMaxx SDK",
+  "sdkVersion": "^0.1.0",
+  "permissions": [
+    {
+      "id": "local-map.read",
+      "required": true,
+      "reason": "Read existing response mapping rules to log their names."
+    }
+  ],
+  "entryPoint": "TimeLogger"
+}

@@ -102,7 +102,7 @@ final class CancellationTests: XCTestCase {
         let sink = CapturingLineSink()
         let bridge = JSONLinesBridge(lineSource: source, sink: sink)
         defer { source.enqueue(nil) }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         let task = Task { try await manager.request("local-map.read") }
         try await pollUntil { !sink.written.isEmpty }

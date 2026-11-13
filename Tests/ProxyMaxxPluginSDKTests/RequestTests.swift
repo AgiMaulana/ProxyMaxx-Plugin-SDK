@@ -5,7 +5,7 @@ final class RequestTests: XCTestCase {
     func testDeclaredRequestReturnsHostStatus() async throws {
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in .granted }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         let status = try await manager.request("local-map.read")
 
@@ -16,7 +16,7 @@ final class RequestTests: XCTestCase {
     func testDeniedStatusPassesThrough() async throws {
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in .denied }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.create"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.create"]))
 
         let status = try await manager.request("local-map.create")
 
@@ -26,7 +26,7 @@ final class RequestTests: XCTestCase {
     func testUnavailableStatusPassesThrough() async throws {
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in .unavailable }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         let status = try await manager.request("local-map.read")
 
@@ -35,7 +35,7 @@ final class RequestTests: XCTestCase {
 
     func testUndeclaredRequestThrowsNotDeclaredWithoutHostContact() async throws {
         let bridge = SpyBridge()
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create"])
         )
@@ -54,7 +54,7 @@ final class RequestTests: XCTestCase {
         // Spec §6: a completed request must not surface NOT_REQUESTED.
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in .notRequested }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.request("local-map.read")
@@ -67,7 +67,7 @@ final class RequestTests: XCTestCase {
     func testHostFailurePropagates() async throws {
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in throw PermissionError.hostUnavailable }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.request("local-map.read")
@@ -84,7 +84,7 @@ final class RequestTests: XCTestCase {
             count += 1
             return count == 1 ? .denied : .granted
         }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         // Spec §10: the SDK keeps no state; the second call resolves host state again.
         let first = try await manager.request("local-map.read")

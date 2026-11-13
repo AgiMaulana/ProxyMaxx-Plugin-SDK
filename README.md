@@ -7,6 +7,14 @@ The SDK is an interface, not a security boundary. ProxyMaxx (the host) owns plug
 identity, manifest validation, consent, permission storage, and enforcement. The SDK
 never stores permission decisions and never exposes a way to grant or revoke them.
 
+## Documentation
+
+- [Quick Start](Docs/QUICKSTART.md) — dependency, manifest, packaging, install
+- [API Reference](Docs/API.md) — `PermissionManager`, statuses, errors, cancellation
+- [Protocol v1](Docs/PROTOCOL.md) — wire contract, including host implementation status
+- [Compatibility](Docs/COMPATIBILITY.md) — versioning and host compatibility matrix
+- [Example plugin](Examples/TimeLogger) — minimal runnable plugin
+
 ## Usage
 
 ```swift

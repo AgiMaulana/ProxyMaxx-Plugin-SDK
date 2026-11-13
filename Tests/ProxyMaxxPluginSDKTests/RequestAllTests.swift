@@ -4,7 +4,7 @@ import XCTest
 final class RequestAllTests: XCTestCase {
     func testEmptyListThrowsInvalidRequestWithoutHostContact() async throws {
         let bridge = SpyBridge()
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.requestAll([])
@@ -19,7 +19,7 @@ final class RequestAllTests: XCTestCase {
 
     func testDuplicateIdentifiersThrowInvalidRequestWithoutHostContact() async throws {
         let bridge = SpyBridge()
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create"])
         )
@@ -37,7 +37,7 @@ final class RequestAllTests: XCTestCase {
 
     func testOneUndeclaredPermissionFailsWholeBatchWithoutHostContact() async throws {
         let bridge = SpyBridge()
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         do {
             _ = try await manager.requestAll(["local-map.read", "filesystem.read"])
@@ -58,7 +58,7 @@ final class RequestAllTests: XCTestCase {
                 ids[2]: PermissionStatus.unavailable,
             ]
         }
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create", "local-map.update"])
         )
@@ -79,7 +79,7 @@ final class RequestAllTests: XCTestCase {
     func testBatchReplyMissingAnIdFailsClosed() async throws {
         let bridge = SpyBridge()
         bridge.requestAllHandler = { ids in [ids[0]: .granted] }
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create"])
         )
@@ -95,7 +95,7 @@ final class RequestAllTests: XCTestCase {
     func testBatchEntryWithNotRequestedFailsClosed() async throws {
         let bridge = SpyBridge()
         bridge.requestAllHandler = { ids in [ids[0]: .notRequested, ids[1]: .granted] }
-        let manager = PermissionManager(
+        let manager = try PermissionManager(
             bridge: bridge,
             manifest: makeManifest(ids: ["local-map.read", "local-map.create"])
         )
@@ -114,7 +114,7 @@ final class RequestAllTests: XCTestCase {
         var state = PermissionStatus.granted
         let bridge = SpyBridge()
         bridge.requestHandler = { _ in state }
-        let manager = PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
+        let manager = try PermissionManager(bridge: bridge, manifest: makeManifest(ids: ["local-map.read"]))
 
         let beforeRevocation = try await manager.request("local-map.read")
         state = .notRequested
