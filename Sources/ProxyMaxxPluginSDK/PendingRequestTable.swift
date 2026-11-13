@@ -3,16 +3,27 @@ import Foundation
 /// Correlates outstanding requests with their continuations. Lock-based rather
 /// than actor-based so task cancellation handlers can cancel synchronously.
 ///
-/// Request lifecycle: `notYetRegistered → pending → resolved`, with a
-/// cancellation that can arrive at any point. Exactly-once resolution is
-/// structural: a continuation is removed from the pending table under the lock
-/// before it is resumed, so no path can resume twice.
+/// Request lifecycle: `notYetRegistered → pending → resolved`. Cancellation is
+/// detected through the task's own cancellation state, never through per-id
+/// bookkeeping:
 ///
-/// Bookkeeping is bounded: at most `maxOutstanding` pending continuations and
-/// `maxResolvedHistory` remembered resolved ids. Cancellation-before-
-/// registration is recorded in a bounded set that is consumed when the request
-/// registers (a registration for an evicted id still fails because `send`
-/// re-checks `Task.isCancelled`).
+/// - Cancelled **before registration**: the handler finds nothing pending and
+///   sends no wire message; registration then observes `Task.isCancelled`
+///   under the same lock and throws. Because the check and the pending insert
+///   are one critical section, a cancel event is always observed by exactly
+///   one side of it — no id-record races, no eviction hazards.
+/// - Cancelled **while pending**: the handler pops the continuation, resumes
+///   it with `CancellationError`, and the bridge sends exactly one
+///   `permission.cancel`.
+/// - Cancelled **after resolution**: the id is in the resolved history, so the
+///   handler does nothing. No bookkeeping is created for a finished request.
+///
+/// Exactly-once resolution is structural: a continuation is removed from the
+/// pending table under the lock before it is resumed, so no path can resume
+/// twice.
+///
+/// All bookkeeping is bounded: at most `maxOutstanding` pending continuations
+/// and `maxResolvedHistory` remembered resolved ids. Nothing else is kept.
 final class PendingRequestTable: @unchecked Sendable {
     /// The reply the bridge resolves a pending request with.
     enum Reply {
@@ -28,18 +39,15 @@ final class PendingRequestTable: @unchecked Sendable {
 
     private let lock = NSLock()
     private var pending: [String: CheckedContinuation<Reply, Error>] = [:]
-    /// Ids cancelled before their request registered.
-    private var cancelledIds: [String] = []
-    private var cancelledIdSet: Set<String> = []
     /// Recently resolved ids, oldest first; bounded by `maxResolvedHistory`.
     private var resolvedHistory: [String] = []
     private var resolvedHistorySet: Set<String> = []
 
     /// Cancels a request. Returns `true` when it was pending and has been
     /// resumed with `CancellationError` (the bridge then sends exactly one
-    /// `permission.cancel`). Returns `false` when the request already resolved
-    /// (no bookkeeping, no message) or must record a pre-registration
-    /// cancellation.
+    /// `permission.cancel`). Returns `false` when the request has not
+    /// registered yet (its registration will observe `Task.isCancelled`) or
+    /// already resolved — in both cases no bookkeeping and no message.
     @discardableResult
     func cancel(_ requestId: String) -> Bool {
         lock.lock()
@@ -49,13 +57,9 @@ final class PendingRequestTable: @unchecked Sendable {
             continuation.resume(throwing: CancellationError())
             return true
         }
-        if resolvedHistorySet.contains(requestId) {
-            // Already resolved; a late cancellation must not create bookkeeping.
-            lock.unlock()
-            return false
-        }
-        rememberCancelledBeforeRegistration(requestId)
         lock.unlock()
+        // Not pending: either still unregistered (registration will see the
+        // cancelled task) or already resolved (in the resolved history).
         return false
     }
 
@@ -108,24 +112,28 @@ final class PendingRequestTable: @unchecked Sendable {
     /// registered and should send the wire message; if it throws, the request
     /// is failed with that error.
     ///
-    /// Throws `CancellationError` immediately when the id was cancelled before
-    /// registration, and `PermissionError.hostUnavailable` when the table is
-    /// full or the id is already in use.
+    /// The capacity/duplicate/cancellation checks and the pending insert are a
+    /// single critical section: a cancellation handler either runs before it
+    /// (and `Task.isCancelled` catches the request here) or after it (and the
+    /// handler pops the pending continuation). There is no window in between.
+    ///
+    /// Throws `CancellationError` when the task is already cancelled, and
+    /// `PermissionError.hostUnavailable` when the table is full or the id is
+    /// already in use.
     func awaitReply(
         for requestId: String,
         onStart: @Sendable () throws -> Void
     ) async throws -> Reply {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()
+            if Task.isCancelled {
+                lock.unlock()
+                continuation.resume(throwing: CancellationError())
+                return
+            }
             if pending.count >= Self.maxOutstanding || pending[requestId] != nil {
                 lock.unlock()
                 continuation.resume(throwing: PermissionError.hostUnavailable)
-                return
-            }
-            if cancelledIdSet.contains(requestId) {
-                removeCancelledBeforeRegistration(requestId)
-                lock.unlock()
-                continuation.resume(throwing: CancellationError())
                 return
             }
             pending[requestId] = continuation
@@ -149,11 +157,21 @@ final class PendingRequestTable: @unchecked Sendable {
         return pending.count
     }
 
-    /// Total bookkeeping entries: pending + pre-registration cancellations.
+    /// Cancellation/lifecycle bookkeeping: just the pending continuations.
+    /// Pre-registration cancellations keep no records (detected via
+    /// `Task.isCancelled`), and resolved history is a bounded cache, not
+    /// lifecycle state.
     var bookkeepingCount: Int {
         lock.lock()
         defer { lock.unlock() }
-        return pending.count + cancelledIds.count
+        return pending.count
+    }
+
+    /// Entries in the bounded resolved-id cache.
+    var resolvedHistoryCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return resolvedHistory.count
     }
 
     // MARK: Private (call with lock held)
@@ -166,27 +184,6 @@ final class PendingRequestTable: @unchecked Sendable {
         if resolvedHistory.count > Self.maxResolvedHistory {
             let evicted = resolvedHistory.removeFirst()
             resolvedHistorySet.remove(evicted)
-        }
-        // Resolution also clears any pre-registration cancellation record: the
-        // request can no longer be cancelled.
-        removeCancelledBeforeRegistration(requestId)
-    }
-
-    private func rememberCancelledBeforeRegistration(_ requestId: String) {
-        if cancelledIdSet.insert(requestId).inserted {
-            cancelledIds.append(requestId)
-        }
-        if cancelledIds.count > Self.maxOutstanding {
-            let evicted = cancelledIds.removeFirst()
-            cancelledIdSet.remove(evicted)
-        }
-    }
-
-    private func removeCancelledBeforeRegistration(_ requestId: String) {
-        if cancelledIdSet.remove(requestId) != nil {
-            if let index = cancelledIds.firstIndex(of: requestId) {
-                cancelledIds.remove(at: index)
-            }
         }
     }
 }

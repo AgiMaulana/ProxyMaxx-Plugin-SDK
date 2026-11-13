@@ -4,19 +4,44 @@ import XCTest
 /// SDK-03 acceptance criteria: request lifecycle, cancellation bookkeeping
 /// bounds, and exactly-once resolution.
 final class PendingRequestTableTests: XCTestCase {
-    func testCancelBeforeRegistrationConsumesAtRegistrationAndSendsNothing() async throws {
+    func testCancelOfUnregisteredIdIsANoopAndRegistrationProceeds() async throws {
+        // Pre-registration cancellation is detected through the task's own
+        // cancellation state (see the bridge's withTaskCancellationHandler), not
+        // through per-id bookkeeping. A cancel event for an id that never
+        // registered is therefore a no-op: the table keeps no records, and a
+        // registration from a non-cancelled task proceeds normally.
         let table = PendingRequestTable()
-        table.cancel("A")
+        XCTAssertFalse(table.cancel("A"))
 
-        do {
-            _ = try await table.awaitReply(for: "A", onStart: {
+        async let reply = table.awaitReply(for: "A", onStart: {})
+        try await pollUntil { table.outstandingCount == 1 }
+        XCTAssertTrue(table.fulfill("A", with: .status(.granted)))
+
+        let status = try await reply
+        if case .status(.granted) = status {} else {
+            XCTFail("Expected granted status")
+        }
+        XCTAssertEqual(table.bookkeepingCount, 0)
+    }
+
+    func testCancelledTaskThrowsAtRegistrationWithoutOnStartOrBookkeeping() async throws {
+        // The real bridge sequence: withTaskCancellationHandler installs the
+        // handler, an already-cancelled task fires it immediately (the handler
+        // finds nothing pending), and registration observes Task.isCancelled.
+        let table = PendingRequestTable()
+        let task = Task {
+            try await table.awaitReply(for: "A", onStart: {
                 XCTFail("onStart must not run for a cancelled request")
             })
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
             XCTFail("Expected CancellationError")
         } catch is CancellationError {}
 
-        // Bookkeeping consumed at registration.
         XCTAssertEqual(table.bookkeepingCount, 0)
+        XCTAssertEqual(table.outstandingCount, 0)
     }
 
     func testCancelWhilePendingResumesOnce() async throws {
@@ -118,12 +143,15 @@ final class PendingRequestTableTests: XCTestCase {
         }
     }
 
-    func testBookkeepingIsBoundedForNeverRegisteredCancellations() {
+    func testCancelBeforeRegistrationCreatesNoBookkeeping() {
         let table = PendingRequestTable()
+        // Cancellation before registration is detected via the task's own
+        // cancellation state at registration; no id records are kept.
         for index in 0..<500 {
             table.cancel("pre-\(index)")
         }
-        XCTAssertLessThanOrEqual(table.bookkeepingCount, PendingRequestTable.maxOutstanding)
+        XCTAssertEqual(table.bookkeepingCount, 0)
+        XCTAssertEqual(table.outstandingCount, 0)
     }
 
     func testResolvedHistoryIsBounded() async throws {
@@ -132,23 +160,16 @@ final class PendingRequestTableTests: XCTestCase {
             let id = "resolved-\(index)"
             async let reply = table.awaitReply(for: id, onStart: {})
             try await pollUntil { table.outstandingCount == 1 }
-            XCTAssertTrue(table.fulfill(id, with: .status(.granted)))
+            // Fail fast instead of hanging if a poll timed out and registration
+            // raced with this loop's bookkeeping.
+            guard table.outstandingCount == 1, table.fulfill(id, with: .status(.granted)) else {
+                XCTFail("registration/fulfill race at iteration \(index)")
+                break
+            }
             _ = try await reply
         }
         // 150 resolutions exceed maxResolvedHistory (128) and must stay capped.
-        XCTAssertLessThanOrEqual(table.bookkeepingCount, PendingRequestTable.maxOutstanding)
-    }
-
-    func testCancellationRecordsClearedWhenRequestResolves() async throws {
-        let table = PendingRequestTable()
-        table.cancel("A")
-        XCTAssertEqual(table.bookkeepingCount, 1)
-
-        async let reply = table.awaitReply(for: "A", onStart: {})
-        try await pollUntil { table.bookkeepingCount == 0 }
-        do {
-            _ = try await reply
-            XCTFail("Expected CancellationError")
-        } catch is CancellationError {}
+        XCTAssertLessThanOrEqual(table.resolvedHistoryCount, PendingRequestTable.maxResolvedHistory)
+        XCTAssertEqual(table.bookkeepingCount, 0)
     }
 }
